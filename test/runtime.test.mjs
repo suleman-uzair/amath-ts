@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { initialize, parseTree, NotInitializedError, EngineUnavailable, Model, modelJson } from '../dist/index.js';
+import { initialize, parseTree, NotInitializedError, EngineUnavailable, Model, modelJson, Parser, ParseError, NestingTooDeep } from '../dist/index.js';
 
 assert.throws(() => parseTree('x'), NotInitializedError);
 const parser = await initialize();
@@ -75,4 +75,20 @@ test('unsupported engines and dialects fail explicitly', () => {
   assert.throws(() => parser.parseTree('x', { dialect: 'pma' }), EngineUnavailable);
   assert.throws(() => parser.parseTree('x', { decimal: ';' }), RangeError);
   assert.throws(() => parser.parseTree('\ud800'), TypeError);
+});
+
+test('ordinary refusal preserves the native failure offset', () => {
+  assert.throws(() => parser.parseTree('a/'), error => error.name === 'ParseError' && error.byteOffset === 2 && error.charOffset === 2);
+});
+test('expected token names do not turn parse errors into depth errors', () => {
+  const runtime = { parseShape() { throw "Parse failed: expected substack, recursion, nesting"; }, parseShapeRecovering() { return { ok: false, error: { offset: 1 } }; } };
+  const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+  assert.throws(() => boundary.parseTree('x?'), error => error instanceof ParseError && !(error instanceof NestingTooDeep) && error.byteOffset === 1);
+});
+test('actual typed stack exhaustion remains a depth refusal', () => {
+  let recovered = false;
+  const runtime = { parseShape() { throw new RangeError('Maximum call stack size exceeded'); }, parseShapeRecovering() { recovered = true; throw new Error('must not reenter exhausted runtime'); } };
+  const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+  assert.throws(() => boundary.parseTree('x'), NestingTooDeep);
+  assert.equal(recovered, false);
 });

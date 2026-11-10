@@ -48,7 +48,12 @@ export class Parser {
     try { return { runtime, shape: runtime.parseShape(input), decimal }; }
     catch (error) {
       const message = String(error);
-      if (/recurs|stack|nesting/i.test(message)) throw new NestingTooDeep(message, input, null);
+      // Expected-token lists may contain names such as 'substack'. Only
+      // runtime stack exhaustion is a resource refusal.
+      const stackExhausted = error instanceof RangeError && /^Maximum call stack size exceeded$/i.test(error.message)
+        || error instanceof Error && error.name === 'InternalError' && /^too much recursion$/i.test(error.message)
+        || typeof WebAssembly !== 'undefined' && error instanceof WebAssembly.RuntimeError && /^(?:call stack exhausted|stack overflow)$/i.test(error.message);
+      if (stackExhausted) throw new NestingTooDeep(message, input, null);
       let offset: number | null = null;
       try {
         const report = runtime.parseShapeRecovering?.(input);
