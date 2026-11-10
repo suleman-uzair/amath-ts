@@ -13,7 +13,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "parsanol": "git+https://github.com/suleman-uzair/parsanol-ts.git#42aeb8fb4773b7e11d0e52bdf5c7e4b34bf5efa4"
+    "parsanol": "git+https://github.com/suleman-uzair/parsanol-ts.git#7b6e07b41c21bc85d1366317d91d29a0eee4cfef"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

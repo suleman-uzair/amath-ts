@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { CallDepthLimitExceeded } from 'parsanol';
 import { readFile } from 'node:fs/promises';
 import { initialize, parseTree, NotInitializedError, EngineUnavailable, Model, modelJson, Parser, ParseError, NestingTooDeep } from '../dist/index.js';
 
@@ -108,5 +109,59 @@ test('causal diagnostics fall back when their reparse accepts or exhausts resour
     const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
     assert.throws(() => boundary.parseShape('a/'), error => error.name === 'ParseError' && error.byteOffset === 2);
     assert.deepEqual(calls, ['strict', 'parslet', 'deepest']);
+  }
+});
+
+
+test('typed SDK resources retain identity and metadata before diagnostic fallback', () => {
+  for (const [name, category, depth, maxDepth] of [
+    ['CallDepthLimitExceeded', 'call_depth_limit', 1025, 1024],
+    ['RecursionLimitExceeded', 'recursion_limit', 1001, 1000],
+    ['ShapeDepthLimitExceeded', 'shape_depth_limit', 513, 512],
+  ]) {
+    for (const phase of ['primary', 'causal', 'recovery']) {
+      const resource = Object.assign(new Error('explicit runtime resource limit'), {name, category, depth, maxDepth});
+      const calls = [];
+      const runtime = {
+        parseShape() { calls.push('primary'); if (phase === 'primary') throw resource; throw 'strict syntax refusal'; },
+        parseShapeWithCompatibility() { calls.push('causal'); if (phase === 'causal') throw resource; return {ok:true,shape:null}; },
+        parseShapeRecovering() { calls.push('recovery'); throw resource; },
+      };
+      const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+      assert.throws(() => boundary.parseTree('x'), error => error === resource && error.category === category && error.depth === depth && error.maxDepth === maxDepth);
+      assert.deepEqual(calls, phase === 'primary' ? ['primary'] : phase === 'causal' ? ['primary', 'causal'] : ['primary', 'causal', 'recovery']);
+    }
+  }
+});
+
+
+test('current WASM typed depth failures preserve metadata and parser reuse', () => {
+  const nested = count => '('.repeat(count) + 'x' + ')'.repeat(count);
+  for (const method of ['parseShape', 'parseTree', 'parseBindings', 'parse']) {
+    assert.doesNotThrow(() => parser[method](nested(64)), `${method} accepts depth64`);
+    for (const depth of [128, 256]) {
+      assert.throws(() => parser[method](nested(depth)), error => error instanceof CallDepthLimitExceeded
+        && error.name === 'CallDepthLimitExceeded' && error.category === 'call_depth_limit'
+        && error.maxDepth === 1024 && error.depth === 1025);
+      assert.doesNotThrow(() => parser[method]('x'), `${method} remains usable after depth${depth}`);
+    }
+  }
+});
+
+
+test('generic WASM traps retain identity without syntax diagnostics', () => {
+  for (const message of ['memory access out of bounds', 'stack overflow']) {
+    for (const phase of ['primary', 'causal', 'recovery']) {
+      const trap = new WebAssembly.RuntimeError(message);
+      const calls = [];
+      const runtime = {
+        parseShape() {calls.push('primary');if (phase === 'primary') throw trap;throw 'strict syntax refusal';},
+        parseShapeWithCompatibility() {calls.push('causal');if (phase === 'causal') throw trap;return {ok:true,shape:null};},
+        parseShapeRecovering() {calls.push('recovery');throw trap;},
+      };
+      const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+      assert.throws(() => boundary.parseTree('x'), error => error === trap);
+      assert.deepEqual(calls, phase === 'primary' ? ['primary'] : phase === 'causal' ? ['primary', 'causal'] : ['primary', 'causal', 'recovery']);
+    }
   }
 });

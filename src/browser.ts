@@ -31,6 +31,21 @@ export class ParseError extends Error {
 }
 export class NestingTooDeep extends ParseError { override name = 'NestingTooDeep'; }
 
+// The initialized SDK exports these typed errors from both Node and browser
+// entries. Preserve the same object and metadata across this loader-neutral API.
+function isTypedResourceLimit(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const resource = error as { name?: unknown; category?: unknown; depth?: unknown; maxDepth?: unknown };
+  return Number.isSafeInteger(resource.depth) && Number.isSafeInteger(resource.maxDepth)
+    && (resource.name === 'CallDepthLimitExceeded' && resource.category === 'call_depth_limit'
+      || resource.name === 'RecursionLimitExceeded' && resource.category === 'recursion_limit'
+      || resource.name === 'ShapeDepthLimitExceeded' && resource.category === 'shape_depth_limit');
+}
+
+function isWasmTrap(error: unknown): boolean {
+  return typeof WebAssembly !== 'undefined' && error instanceof WebAssembly.RuntimeError;
+}
+
 const entries = { '.': 'dot', ',': 'comma', '٫': 'arabic' } as const;
 /** Initialized, synchronous WASM parser. No preprocessing or alternate parser. */
 export class Parser {
@@ -48,26 +63,33 @@ export class Parser {
     const runtime = this.runtimes.get(decimal)!;
     try { return { runtime, shape: runtime.parseShape(input), decimal }; }
     catch (error) {
+      if (isTypedResourceLimit(error)) throw error;
+      if (isWasmTrap(error)) throw error;
       const message = String(error);
       // Expected-token lists may contain names such as 'substack'. Only
       // runtime stack exhaustion is a resource refusal.
       const stackExhausted = error instanceof RangeError && /^Maximum call stack size exceeded$/i.test(error.message)
-        || error instanceof Error && error.name === 'InternalError' && /^too much recursion$/i.test(error.message)
-        || typeof WebAssembly !== 'undefined' && error instanceof WebAssembly.RuntimeError && /^(?:call stack exhausted|stack overflow)$/i.test(error.message);
+        || error instanceof Error && error.name === 'InternalError' && /^too much recursion$/i.test(error.message);
       if (stackExhausted) throw new NestingTooDeep(message, input, null);
       let offset: number | null = null;
       // Amath::ErrorPosition reparses only refusals with the causal Tree
-      // policy. If the diagnostic reparse accepts or exhausts resources, use the
-      // primary engine's deepest cause; successful shapes stay strict.
+      // policy. Diagnostic acceptance or an untyped failure uses the primary
+      // deepest cause; typed SDK resources propagate without a syntax fallback.
       try {
         const causal = runtime.parseShapeWithCompatibility(input, 'parslet');
         if (!causal.ok && Number.isInteger(causal.error?.offset)) offset = causal.error!.offset!;
-      } catch { /* A diagnostic stack/resource refusal has no causal position. */ }
+      } catch (diagnostic) {
+        if (isTypedResourceLimit(diagnostic) || isWasmTrap(diagnostic)) throw diagnostic;
+        // An untyped diagnostic refusal has no causal position.
+      }
       if (offset === null) {
         try {
           const report = runtime.parseShapeRecovering?.(input);
           if (report && !report.ok && Number.isInteger(report.error?.offset)) offset = report.error!.offset!;
-        } catch { /* Preserve the primary refusal when recovery is unavailable. */ }
+        } catch (recovery) {
+          if (isTypedResourceLimit(recovery) || isWasmTrap(recovery)) throw recovery;
+          // Preserve the primary refusal when recovery is unavailable.
+        }
       }
       throw new ParseError(message, input, offset);
     }
