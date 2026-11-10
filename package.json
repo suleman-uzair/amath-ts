@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check:artifacts": "node scripts/verify-artifacts.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "parsanol": "0.10.44"
