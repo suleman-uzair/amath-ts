@@ -1,30 +1,32 @@
 # amath-ts
 
-TypeScript port of [amath](https://github.com/plurimath/amath) — the
-AsciiMath parser — on the same Parsanol PARG runtime
-(`parsanol` npm package, wasm-backed).
+AsciiMath on the pinned amath PARG artifact and Parsanol WASM runtime.
 
-Status: **scaffold** — port owned by @suleman-uzair.
-
-## Contract
-
-amath ships its grammar and checksummed artifact:
-
-* `grammars/asciimath.parg` — the PARG source
-* `artifacts/asciimath.json` + `artifacts/asciimath.checksums.txt`
-
-amath-ts loads that artifact (vendored, pinned to an amath release tag)
-and produces AsciiMath parse trees equivalent to the Ruby runtime's
-(`Amath.parse`), including rejection positions.
-
-## Conformance
-
-Replay amath's corpora (see the amath repo `corpora/`) — tree parity with
-the Ruby engine on both the native and pure-JS parsanol paths.
-
-## Development
-
-```sh
-npm install
-npm run build && npm test
+```ts
+import { initialize } from '@plurimath/amath-ts';
+const parser = await initialize();
+const model = parser.parse('alpha + 1.5');
+const tree = parser.parseTree('x^2');
 ```
+
+Parsing is synchronous after initialization. `parse` returns upstream-generated
+LML model classes; `parseTree` returns the legacy capture tree, including wrapper
+removal and expression renesting. Slice leaves are `{text, offset}`, with UTF-8
+byte offsets. No preprocessing occurs in the stage. Decimal markers are `.`,
+`,` and `٫`; source number text is retained.
+
+`artifacts/manifest.json` pins the Ruby source and every vendored artifact.
+`model/codegen-provenance.json` pins the upstream generator and generated files.
+The generated model/codec sources consume an open upstream LML candidate; no
+unpublished private package is presented as a registry dependency.
+
+The default entry uses Node's Parsanol package. `./browser` exports `createParser`
+for a caller-provided, initialized compatible WASM factory and the pinned artifact
+bundle. It does not import Node builtins. A bundled browser engine is pending
+upstream packaging. The Ruby interpreter fallback and pma dialect are explicitly
+unavailable in this baseline. WASM error offsets still require qualification
+against Ruby's Parslet-compatible rejection positions.
+
+Run `npm ci`, `npm run build`, and `npm test`. CI checks 160 legacy trees,
+10 offset-aware rows and 10 typed-model rows on Node 22/24 across three OSes.
+The package remains private; publication is a separate decision.
