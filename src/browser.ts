@@ -11,6 +11,7 @@ export type Decimal = '.' | ',' | '٫';
 export interface Options { decimal?: Decimal; engine?: 'auto' | 'wasm' | 'native' | 'ruby'; dialect?: 'legacy' | 'pma' }
 export interface Runtime {
   parseShape(input: string): unknown;
+  parseShapeWithCompatibility(input: string, compatibility: "strict" | "parslet"): { ok: boolean; shape?: unknown; error?: { offset?: number; ranked?: unknown } };
   applyBindingsArtifact(bindings: string, shape: unknown): Record<string, unknown>;
   parseShapeRecovering?(input: string): { ok: boolean; error?: { offset?: number; message?: string } };
 }
@@ -33,7 +34,7 @@ export class NestingTooDeep extends ParseError { override name = 'NestingTooDeep
 const entries = { '.': 'dot', ',': 'comma', '٫': 'arabic' } as const;
 /** Initialized, synchronous WASM parser. No preprocessing or alternate parser. */
 export class Parser {
-  readonly capabilities = Object.freeze({ engine: 'wasm', rubyFallback: false, dialects: ['legacy'] as const });
+  readonly capabilities = Object.freeze({ engine: 'wasm', rubyFallback: false, diagnostics: 'parslet-causal-with-strict-fallback' as const, dialects: ['legacy'] as const });
   constructor(private readonly runtimes: ReadonlyMap<Decimal, Runtime>, private readonly bindings: string, private readonly wrappers: Wrappers) {}
   private run(input: string, options: Options = {}): { runtime: Runtime; shape: unknown; decimal: Decimal } {
     if (typeof input !== 'string') throw new TypeError('input must be a string');
@@ -55,10 +56,19 @@ export class Parser {
         || typeof WebAssembly !== 'undefined' && error instanceof WebAssembly.RuntimeError && /^(?:call stack exhausted|stack overflow)$/i.test(error.message);
       if (stackExhausted) throw new NestingTooDeep(message, input, null);
       let offset: number | null = null;
+      // Amath::ErrorPosition reparses only refusals with the causal Tree
+      // policy. If the diagnostic reparse accepts or exhausts resources, use the
+      // primary engine's deepest cause; successful shapes stay strict.
       try {
-        const report = runtime.parseShapeRecovering?.(input);
-        if (report && !report.ok && Number.isInteger(report.error?.offset)) offset = report.error!.offset!;
-      } catch { /* Preserve the original refusal when recovery is unavailable. */ }
+        const causal = runtime.parseShapeWithCompatibility(input, 'parslet');
+        if (!causal.ok && Number.isInteger(causal.error?.offset)) offset = causal.error!.offset!;
+      } catch { /* A diagnostic stack/resource refusal has no causal position. */ }
+      if (offset === null) {
+        try {
+          const report = runtime.parseShapeRecovering?.(input);
+          if (report && !report.ok && Number.isInteger(report.error?.offset)) offset = report.error!.offset!;
+        } catch { /* Preserve the primary refusal when recovery is unavailable. */ }
+      }
       throw new ParseError(message, input, offset);
     }
   }
@@ -121,7 +131,11 @@ export async function createParser(bundle: ArtifactBundle, factory: RuntimeFacto
     if (!wrappers || typeof wrappers !== 'object') throw new Error('missing wrapper declarations');
   } catch (error) { throw new ArtifactError(`invalid artifact bundle: ${String(error)}`); }
   const runtimes = new Map<Decimal, Runtime>();
-  for (const decimal of Object.keys(entries) as Decimal[]) runtimes.set(decimal, await factory(bundle.artifact, entries[decimal]));
+  for (const decimal of Object.keys(entries) as Decimal[]) {
+    const runtime = await factory(bundle.artifact, entries[decimal]);
+    if (typeof runtime.parseShapeWithCompatibility !== 'function') throw new EngineUnavailable('the runtime lacks causal diagnostic compatibility');
+    runtimes.set(decimal, runtime);
+  }
   return new Parser(runtimes, bundle.bindings, Object.freeze({ ...wrappers }));
 }
 export type { Tree, Slice } from './tree.js';

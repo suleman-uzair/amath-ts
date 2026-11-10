@@ -22,11 +22,13 @@ unpublished private package is presented as a registry dependency.
 
 The default entry uses Node's Parsanol package. `./browser` exports `createParser`
 for a caller-provided, initialized compatible WASM factory and the pinned artifact
-bundle. It does not import Node builtins. A bundled browser engine is pending
-upstream packaging. The Ruby interpreter fallback and pma dialect are explicitly
-unavailable in this baseline. WASM error offsets still require qualification
-against Ruby's Parslet-compatible rejection positions.
+bundle. It does not import Node builtins; the pinned SDK supplies its own browser
+runtime. The Ruby interpreter fallback and pma dialect are explicitly unavailable
+in this baseline. Refusal diagnostics use the Ruby-compatible policy below;
+full diagnostic corpus qualification remains separate.
 
 Run `npm ci`, `npm run build`, and `npm test`. CI checks 160 legacy trees,
 10 offset-aware rows and 10 typed-model rows on Node 22/24 across three OSes.
 The package remains private; publication is a separate decision.
+
+Refusal positions follow Ruby Amath's policy: strict parsing supplies successful shapes; only a refusal triggers the engine's Parslet-compatible causal diagnostic selector. If that diagnostic reparse accepts or exhausts resources, the original strict engine's deepest failure is used. This is one WASM engine with an explicit reporter policy. It does not invoke a legacy parser or switch successful binding shapes. The public Git-pinned Parsanol candidate includes the required API and vendored engine source pin; it is not an npm release. Browser factories must supply `parseShapeWithCompatibility` too.

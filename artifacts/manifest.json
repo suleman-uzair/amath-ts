@@ -13,7 +13,11 @@
   "parsanol": {
     "package": "parsanol",
     "version": "0.10.44",
-    "source_commit": "f0af89b2ca00178b64a58ae4ebc8793a88c53223"
+    "source_commit": "42aeb8fb4773b7e11d0e52bdf5c7e4b34bf5efa4",
+    "repository": "https://github.com/suleman-uzair/parsanol-ts",
+    "status": "public Git candidate, PR61; not an npm release",
+    "engine_source_commit": "4b8351aae8e403e73aaa306111250ebd56c12e0f",
+    "diagnostics": "strict primary shape; Parslet causal refusal; strict deepest fallback"
   },
   "model_codegen": {
     "repository": "https://github.com/lutaml/lutaml-ts",

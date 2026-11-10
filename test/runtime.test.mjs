@@ -77,11 +77,11 @@ test('unsupported engines and dialects fail explicitly', () => {
   assert.throws(() => parser.parseTree('\ud800'), TypeError);
 });
 
-test('ordinary refusal preserves the native failure offset', () => {
-  assert.throws(() => parser.parseTree('a/'), error => error.name === 'ParseError' && error.byteOffset === 2 && error.charOffset === 2);
+test('causal refusal matches Ruby byte and character offsets', () => {
+  for (const [input, byte, char] of [['a/', 1, 1], ['α a/', 4, 3]]) assert.throws(() => parser.parseTree(input), error => error.name === 'ParseError' && error.byteOffset === byte && error.charOffset === char);
 });
 test('expected token names do not turn parse errors into depth errors', () => {
-  const runtime = { parseShape() { throw "Parse failed: expected substack, recursion, nesting"; }, parseShapeRecovering() { return { ok: false, error: { offset: 1 } }; } };
+  const runtime = { parseShape() { throw "Parse failed: expected substack, recursion, nesting"; }, parseShapeWithCompatibility() { return { ok: false, error: { offset: 1 } }; } };
   const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
   assert.throws(() => boundary.parseTree('x?'), error => error instanceof ParseError && !(error instanceof NestingTooDeep) && error.byteOffset === 1);
 });
@@ -91,4 +91,22 @@ test('actual typed stack exhaustion remains a depth refusal', () => {
   const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
   assert.throws(() => boundary.parseTree('x'), NestingTooDeep);
   assert.equal(recovered, false);
+});
+
+test('causal diagnostics never replace strict successful shapes', () => {
+  let diagnostics = 0;
+  const shape = { strict: true };
+  const runtime = { parseShape() { return shape; }, parseShapeWithCompatibility() { diagnostics++; throw new Error('unexpected reparse'); } };
+  const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+  assert.equal(boundary.parseShape('x'), shape);
+  assert.equal(diagnostics, 0);
+});
+test('causal diagnostics fall back when their reparse accepts or exhausts resources', () => {
+  for (const diagnostic of [() => ({ok: true, shape: null}), () => { throw new RangeError('Maximum call stack size exceeded'); }]) {
+    const calls = [];
+    const runtime = { parseShape() { calls.push('strict'); throw 'original strict refusal'; }, parseShapeWithCompatibility(input, mode) { calls.push(mode); return diagnostic(); }, parseShapeRecovering() { calls.push('deepest'); return {ok: false, error: {offset: 2}}; } };
+    const boundary = new Parser(new Map([['.', runtime]]), '{}', {});
+    assert.throws(() => boundary.parseShape('a/'), error => error.name === 'ParseError' && error.byteOffset === 2);
+    assert.deepEqual(calls, ['strict', 'parslet', 'deepest']);
+  }
 });
